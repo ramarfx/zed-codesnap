@@ -6,13 +6,13 @@ A practical CodeSnap-style helper for Zed. The reliable workflow is intentionall
 2. Copy the selection with Zed's normal copy command.
 3. Run the Zed task `CodeSnap: Capture Copied Selection`.
 4. Read the concise terminal feedback.
-5. Open the generated SVG/HTML from `~/Unduhan`.
+5. Paste the copied PNG/JPG file where supported, or open the generated image from `~/Unduhan`.
 
 Current public Zed extension APIs do not expose direct active-selection, clipboard, custom panel, or native image-export APIs to normal extensions. Because of that Crimson Barrier, this project avoids heavy custom UI and uses Zed's normal task/terminal interaction pattern instead.
 
 ## What is included
 
-- `scripts/zed-codesnap.mjs` — Node CLI renderer/export helper. It reads clipboard, stdin, or a file; renders a restrained Zed-like CodeSnap output; creates the output folder when permitted; avoids filename collisions; and prints the saved path.
+- `scripts/zed-codesnap.mjs` — Node CLI renderer/export helper. It reads clipboard, stdin, or a file; renders a restrained Zed-like CodeSnap output with lightweight syntax highlighting; creates the output folder when permitted; avoids filename collisions; can copy the rendered file to the OS clipboard; and prints the saved path.
 - `.zed/tasks.json` — native-feeling Zed task entry point named `CodeSnap: Capture Copied Selection`.
 - `extension.toml`, `Cargo.toml`, `src/*.rs` — experimental Zed slash-command wrapper that validates explicit input or worktree files and prepares a normalized render request for future extension-side integration.
 - `scripts/test-cli.mjs` — functional workflow tests for save-to-Unduhan behavior, collisions, config overrides, and common errors.
@@ -42,7 +42,7 @@ The repository includes this Zed task:
 [
   {
     "label": "CodeSnap: Capture Copied Selection",
-    "command": "node scripts/zed-codesnap.mjs --from-clipboard --output-dir ~/Unduhan",
+    "command": "node scripts/zed-codesnap.mjs --from-clipboard --copy --format png --output-dir ~/Unduhan",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "reveal": "always"
@@ -60,10 +60,11 @@ In Zed:
 On success, the task prints:
 
 ```text
-CodeSnap saved: /home/<user>/Unduhan/codesnap-20260903-092400-rust.svg
+CodeSnap saved: /home/<user>/Unduhan/codesnap-20260903-092400-rust.png
+CodeSnap file copied to clipboard.
 ```
 
-The default save directory is `~/Unduhan`. The helper creates it if it does not already exist and permissions allow it. If a generated filename already exists, it appends `-2`, `-3`, etc.
+The default save directory is `~/Unduhan`. The helper creates it if it does not already exist and permissions allow it. If a generated filename already exists, it appends `-2`, `-3`, etc. Clipboard copy uses OS file clipboard formats, so it copies the generated `.png` or `.jpg` file reference instead of raw SVG/XML text. On Linux this requires `wl-copy` or `xclip`; otherwise the file is still saved and the terminal reports that file clipboard copy is unavailable.
 
 Optional keybinding example:
 
@@ -81,16 +82,16 @@ Optional keybinding example:
 ## CLI usage
 
 ```sh
-node scripts/zed-codesnap.mjs --from-clipboard
+node scripts/zed-codesnap.mjs --from-clipboard --copy
 node scripts/zed-codesnap.mjs --from-stdin --language rust < src/main.rs
-node scripts/zed-codesnap.mjs --file src/main.rs --output-dir ~/Unduhan
+node scripts/zed-codesnap.mjs --file src/main.rs --format jpg --output-dir ~/Unduhan
 node scripts/zed-codesnap.mjs --from-stdin --format html --language typescript
 ```
 
-Supported formats are `svg` and `html`. The default is `svg` because it is dependency-free and works in this worker environment. If `png` is requested without a renderer dependency, the helper exits non-zero with a clear message instead of pretending the save worked:
+Supported formats are `png`, `jpg`, `svg`, and `html`. The default is `png`. PNG/JPG export renders the highlighted SVG internally, then converts it with `rsvg-convert` or ImageMagick `magick`.
 
 ```text
-CodeSnap: unsupported format `png`. Use svg or html.
+CodeSnap: unsupported format `<format>`. Use png, jpg, svg, or html.
 ```
 
 ## UI copy and feedback
@@ -100,7 +101,7 @@ Messages are short and Zed-like:
 Success:
 
 ```text
-CodeSnap saved: ~/Unduhan/codesnap-20260903-092400.svg
+CodeSnap saved: ~/Unduhan/codesnap-20260903-092400.png
 ```
 
 No copied code or empty input:
@@ -124,7 +125,7 @@ CodeSnap: failed to save to ~/Unduhan. Check that the folder exists and is writa
 Unsupported format:
 
 ```text
-CodeSnap: unsupported format `<format>`. Use svg or html.
+CodeSnap: unsupported format `<format>`. Use png, jpg, svg, or html.
 ```
 
 ## Configuration
@@ -141,31 +142,33 @@ Example `.zed-codesnap.json`:
 
 ```json
 {
-  "theme_preset": "zed-dark",
-  "background": "#0f1117",
+  "theme_preset": "one-dark-pro",
+  "background": "#282c34",
   "padding": 24,
   "rounded_corners": 12,
   "line_numbers": false,
-  "window_chrome": true,
+  "window_chrome": false,
   "window_title": null,
   "font_size": 14,
   "filename_pattern": "codesnap-{timestamp}-{slug}.{ext}",
   "output_directory": "~/Unduhan",
-  "format": "svg"
+  "format": "png",
+  "copy_to_clipboard": true
 }
 ```
 
 Settings schema:
 
 - `output_directory` / CLI `--output-dir`, `--output-directory`, `--output`: destination directory. Default: `~/Unduhan`.
-- `format` / CLI `--format`: `svg` or `html`. Default: `svg`.
-- `theme_preset` / alias `theme`: style metadata. Default: `zed-dark`.
-- `background`: safe CSS color name, `transparent`, `#rgb`, or `#rrggbb`. Default: `#0f1117`.
+- `format` / CLI `--format`: `png`, `jpg`, `svg`, or `html`. Default: `png`.
+- `copy_to_clipboard` / CLI `--copy`, `--copy-to-clipboard`, `--no-copy`: copy the rendered file after saving. Default: `true` in the CLI helper.
+- `theme_preset` / alias `theme`: style metadata. Default: `one-dark-pro`.
+- `background`: safe CSS color name, `transparent`, `#rgb`, or `#rrggbb`. Default: `#282c34`.
 - `padding`: integer pixels from 0 to 128. Default: `24` in CLI helper, `32` in the experimental extension boundary.
 - `rounded_corners` / alias `corner_radius`: integer pixels from 0 to 64. Default: `12`.
-- `line_numbers` / alias `show_line_numbers`: boolean. Default: `false` in CLI helper, `true` in the experimental extension boundary.
-- `window_chrome`: boolean. Default: `true`.
-- `window_title`: optional title shown in the generated SVG chrome.
+- `line_numbers` / alias `show_line_numbers`: boolean. Default: `false`.
+- `window_chrome`: accepted for compatibility, but the current renderer intentionally omits the three-dot window chrome.
+- `window_title`: optional title metadata for future renderers; the current minimal image renderer does not draw a title bar.
 - `font_size`: integer pixels from 8 to 48. Default: `14` in CLI helper, `16` in the experimental extension boundary.
 - `filename_pattern`: must include `{ext}` and must not contain path separators. Supported tokens: `{timestamp}`, `{language}`, `{filename}`, `{slug}`, `{ext}`.
 
@@ -198,7 +201,7 @@ node scripts/test-cli.mjs
 node scripts/validate-scaffold.mjs
 ```
 
-The CLI test covers the happy path, missing `~/Unduhan` creation, collision-safe names, changed configuration values, empty/no-selection input, unsupported language metadata, unsupported format feedback, and failed save feedback. Full native Zed loading and Rust compilation still require a machine with Zed and Rust installed.
+The CLI test covers the happy path, PNG/JPG export, syntax-highlighted SVG source output, missing `~/Unduhan` creation, collision-safe names, changed configuration values, empty/no-selection input, unsupported language metadata, unsupported format feedback, clipboard-copy feedback, and failed save feedback. Full native Zed loading and Rust compilation still require a machine with Zed and Rust installed.
 
 ## Verification checklist
 
@@ -214,31 +217,35 @@ Manual smoke test in Zed:
 1. Select a small code block.
 2. Copy it.
 3. Run `task: spawn` → `CodeSnap: Capture Copied Selection`.
-4. Confirm the terminal prints `CodeSnap saved: ...` and the generated `.svg` appears under `~/Unduhan`.
+4. Confirm the terminal prints `CodeSnap saved: ...`, then either `CodeSnap file copied to clipboard.` or a clipboard-tool warning.
 
 Acceptance coverage confirmed by the automated checklist:
 
 - Working CodeSnap-style output generation from stdin/file/clipboard helper paths.
 - Native-feeling Zed task entry point: `CodeSnap: Capture Copied Selection`.
-- Practical workflow: select, copy, run task, open saved output.
+- Practical workflow: select, copy, run task, paste copied PNG/JPG file or open saved output.
+- One Dark Pro-style syntax-highlighted image output for common code tokens.
+- Minimal image frame: code only, with no three-dot window ornament.
 - Configurable render settings via `.zed-codesnap.json` and CLI overrides.
 - Default save location is `~/Unduhan`; missing directories are created recursively.
 - Filename collisions receive numeric suffixes instead of overwriting existing output.
+- Optional clipboard output reports success or a non-fatal tooling warning.
 - Empty selection/no input fails with actionable guidance.
 - Unsupported language metadata falls back safely and cannot escape the filename pattern.
-- Unsupported formats fail clearly instead of fabricating unsupported PNG output.
+- Unsupported formats fail clearly.
 - Failed saves return a non-zero exit and filesystem error context.
 
 ## Known limitations
 
 - Current public Zed extension APIs do not expose direct active-selection capture, arbitrary clipboard access, custom panels/webviews, or native image export for normal extensions.
-- PNG export is intentionally not promised in this dependency-free build. Use SVG or HTML unless a renderer dependency is added later.
+- PNG/JPG export requires `rsvg-convert` or ImageMagick `magick` on the machine running the helper.
+- Clipboard file support depends on the receiving app and installed OS clipboard tooling. Linux file clipboard copy requires `wl-copy` or `xclip`.
 - The experimental slash command is an integration boundary, not the recommended daily workflow.
 
 ## Troubleshooting
 
 - `CodeSnap: no code found...` — copy the selected text first, or use `--from-stdin` / `--file`.
 - `CodeSnap: clipboard is unavailable...` — install a supported clipboard tool (`wl-paste`, `xclip`, or `xsel`) or pipe code via stdin.
-- `CodeSnap: unsupported format ...` — set `"format": "svg"` or `"format": "html"`.
+- `CodeSnap: unsupported format ...` — set `"format": "png"`, `"format": "jpg"`, `"format": "svg"`, or `"format": "html"`.
 - Save errors under `~/Unduhan` — check write permissions, remove conflicting files that block directory creation, or set `--output-dir <writable-folder>`.
 - Configuration changes seem ignored — validate that `.zed-codesnap.json` is in the project root and contains valid JSON; invalid values intentionally fall back to safe defaults.

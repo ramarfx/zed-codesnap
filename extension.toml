@@ -4,7 +4,7 @@ version = "0.1.0"
 schema_version = 1
 authors = ["RamarFX <ramarfx@example.com>"]
 description = "Experimental CodeSnap-style capture scaffolding for Zed. Normalizes code input for a future renderer while documenting current API limits."
-repository = "https://example.com/ramarfx/zed-codesnap"
+repository = "https://github.com/ramarfx/zed-codesnap"
 
 [slash_commands.codesnap]
 description = "Prepare a CodeSnap capture request from explicit code or a worktree file path."

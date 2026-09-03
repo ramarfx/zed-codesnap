@@ -1,11 +1,11 @@
 use zed_extension_api as zed;
 
-pub const DEFAULT_THEME_PRESET: &str = "zed-dark";
-pub const DEFAULT_BACKGROUND: &str = "#0f1117";
+pub const DEFAULT_THEME_PRESET: &str = "one-dark-pro";
+pub const DEFAULT_BACKGROUND: &str = "#282c34";
 pub const DEFAULT_PADDING: u32 = 32;
 pub const DEFAULT_ROUNDED_CORNERS: u32 = 12;
-pub const DEFAULT_LINE_NUMBERS: bool = true;
-pub const DEFAULT_WINDOW_CHROME: bool = true;
+pub const DEFAULT_LINE_NUMBERS: bool = false;
+pub const DEFAULT_WINDOW_CHROME: bool = false;
 pub const DEFAULT_FONT_SIZE: u32 = 16;
 pub const DEFAULT_FILENAME_PATTERN: &str = "codesnap-{timestamp}-{slug}.{ext}";
 pub const DEFAULT_OUTPUT_DIRECTORY: &str = "~/Unduhan";
@@ -188,7 +188,7 @@ pub fn sanitize_color(value: &str, fallback: &str) -> String {
 
 fn sanitize_theme_preset(value: &str, fallback: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
-        "zed-dark" | "zed-light" | "github-dark" | "github-light" | "dracula" | "nord" | "one-dark" => value.trim().to_ascii_lowercase(),
+        "zed-dark" | "zed-light" | "github-dark" | "github-light" | "dracula" | "nord" | "one-dark" | "one-dark-pro" => value.trim().to_ascii_lowercase(),
         _ => fallback.to_string(),
     }
 }
@@ -262,9 +262,9 @@ mod tests {
     fn defaults_save_to_downloads_with_codesnap_style() {
         let options = RenderOptions::default();
         assert_eq!(options.output_directory, "~/Unduhan");
-        assert_eq!(options.theme_preset, "zed-dark");
-        assert!(options.line_numbers);
-        assert!(options.window_chrome);
+        assert_eq!(options.theme_preset, "one-dark-pro");
+        assert!(!options.line_numbers);
+        assert!(!options.window_chrome);
     }
 
     #[test]
