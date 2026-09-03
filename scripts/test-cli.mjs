@@ -53,6 +53,14 @@ try {
   check(jpg.status === 0 && jpgPath?.endsWith('.jpg'), 'jpg output is supported');
   check(jpgBytes[0] === 0xff && jpgBytes[1] === 0xd8, 'jpg output is a real jpeg image');
 
+  const scaled = run(['--from-stdin', '--language', 'rust', '--width', '720', '--no-copy'], 'fn main() {}\n');
+  check(scaled.status === 0, 'width preset is accepted');
+
+  const inferred = run(['--from-stdin', '--format', 'svg', '--no-copy'], 'const answer: number = 42;\n');
+  const inferredPath = inferred.stdout.match(/CodeSnap saved: (.*)/)?.[1]?.trim();
+  check(inferred.status === 0, 'stdin without explicit language still captures');
+  check(inferredPath?.endsWith('typescript.svg'), 'stdin language is inferred from TypeScript syntax');
+
   const collision = run(['--from-stdin', '--language', 'rust', '--no-copy'], 'fn main() {}\n');
   const collisionPath = collision.stdout.match(/CodeSnap saved: (.*)/)?.[1]?.trim();
   check(collision.status === 0 && collisionPath && collisionPath !== savedPath, 'filename collisions are avoided');

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { spawn, spawnSync } from "node:child_process";
 
 const DEFAULTS = Object.freeze({
@@ -17,6 +17,11 @@ const DEFAULTS = Object.freeze({
   font_size: 14,
   filename_pattern: "codesnap-{timestamp}-{slug}.{ext}",
   copy_to_clipboard: true,
+  save_on_copy_failure: true,
+  preview: false,
+  scale: 2,
+  width: null,
+  max_width: null,
 });
 
 function parseArgs(argv) {
@@ -31,6 +36,10 @@ function parseArgs(argv) {
     title: null,
     copy: null,
     save: null,
+    preview: null,
+    scale: null,
+    width: null,
+    maxWidth: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -80,6 +89,21 @@ function parseArgs(argv) {
       case "--no-save":
       case "--no-save-to-file":
         args.save = false;
+        break;
+      case "--preview":
+        args.preview = true;
+        break;
+      case "--no-preview":
+        args.preview = false;
+        break;
+      case "--scale":
+        args.scale = takeValue(argv, ++i, arg);
+        break;
+      case "--width":
+        args.width = takeValue(argv, ++i, arg);
+        break;
+      case "--max-width":
+        args.maxWidth = takeValue(argv, ++i, arg);
         break;
       case "--help":
       case "-h":
@@ -136,6 +160,10 @@ function normalizeOptions(config, args) {
   if (args.language && !options.language) options.language = args.language;
   if (args.copy !== null) options.copy_to_clipboard = args.copy;
   options.save_to_file = args.save;
+  if (args.preview !== null) options.preview = args.preview;
+  if (args.scale !== null) options.scale = args.scale;
+  if (args.width !== null) options.width = args.width;
+  if (args.maxWidth !== null) options.max_width = args.maxWidth;
 
   options.output_directory = expandHome(
     stringOr(options.output_directory, DEFAULTS.output_directory),
@@ -169,6 +197,11 @@ function normalizeOptions(config, args) {
   );
   options.copy_to_clipboard = Boolean(options.copy_to_clipboard);
   options.save_to_file = options.save_to_file ?? !options.copy_to_clipboard;
+  options.save_on_copy_failure = options.save_on_copy_failure !== false;
+  options.preview = Boolean(options.preview);
+  options.scale = boundedNumber(options.scale, 1, 4, DEFAULTS.scale);
+  options.width = optionalBoundedNumber(options.width, 120, 4096);
+  options.max_width = optionalBoundedNumber(options.max_width, 120, 4096);
   return options;
 }
 
@@ -181,6 +214,14 @@ function boundedNumber(value, min, max, fallback) {
   return Number.isFinite(number) && number >= min && number <= max
     ? Math.round(number)
     : fallback;
+}
+
+function optionalBoundedNumber(value, min, max) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max
+    ? Math.round(number)
+    : null;
 }
 
 function sanitizeColor(value, fallback) {
@@ -340,10 +381,14 @@ function pathToFileUri(path) {
   return `file://${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-function inferLanguage(args) {
+function inferLanguage(args, code = "") {
   if (args.language?.trim()) return normalizeLanguage(args.language);
-  if (!args.file) return "text";
+  if (!args.file) return inferLanguageFromCode(code);
   const ext = extname(args.file).slice(1).toLowerCase();
+  return inferLanguageFromExtension(ext) ?? inferLanguageFromCode(code);
+}
+
+function inferLanguageFromExtension(ext) {
   return (
     {
       rs: "rust",
@@ -359,8 +404,22 @@ function inferLanguage(args) {
       json: "json",
       md: "markdown",
       sh: "shell",
-    }[ext] ?? "text"
+    }[ext] ?? null
   );
+}
+
+function inferLanguageFromCode(code) {
+  const sample = code.slice(0, 4000);
+  if (/^\s*<(!doctype\s+html|html|[a-z][\w:-]*(\s|>|\/))/i.test(sample)) return "html";
+  if (/^\s*[\[{]/.test(sample) && /"[^"]+"\s*:/.test(sample)) return "json";
+  if (/\bfn\s+[a-zA-Z_][\w]*\s*\(|\blet\s+mut\s+|\bimpl\s+|\bpub\s+(struct|enum|fn)\b/.test(sample)) return "rust";
+  if (/\bpackage\s+main\b|\bfunc\s+[A-Z_a-z]\w*\s*\(|:=/.test(sample)) return "go";
+  if (/\b(def|class)\s+[A-Za-z_]\w*\s*[(:]|\bimport\s+[A-Za-z_][\w.]*|\bfrom\s+[A-Za-z_][\w.]*\s+import\b/.test(sample)) return "python";
+  if (/\binterface\s+[A-Za-z_]\w*|\btype\s+[A-Za-z_]\w*\s*=|:\s*(string|number|boolean)\b/.test(sample)) return "typescript";
+  if (/\b(function|const|let|var)\s+[A-Za-z_$]|=>|console\.log/.test(sample)) return "javascript";
+  if (/^\s*#include\s+|\bint\s+main\s*\(/.test(sample)) return "c";
+  if (/^\s*#!/.test(sample) || /\b(echo|fi|done|then)\b/.test(sample)) return "shell";
+  return "text";
 }
 
 function normalizeLanguage(value) {
@@ -556,7 +615,7 @@ function writeRenderedOutput(outputPath, svg, options) {
   if (options.format === "html") {
     throw new Error("CodeSnap: HTML rendering is only available through the HTML renderer.");
   }
-  const converted = convertSvg(svg, options.format, options.background);
+  const converted = convertSvg(svg, options);
   writeFileSync(outputPath, converted);
 }
 
@@ -566,12 +625,17 @@ function renderOutput(code, language, options) {
   }
   const svg = renderSvg(code, language, options);
   if (options.format === "svg") return Buffer.from(svg, "utf8");
-  return convertSvg(svg, options.format, options.background);
+  return convertSvg(svg, options);
 }
 
-function convertSvg(svg, format, background) {
+function convertSvg(svg, options) {
+  const { format, background } = options;
+  const width = targetWidth(svg, options);
   if (format === "png") {
-    const rsvg = spawnSync("rsvg-convert", ["-f", "png"], {
+    const args = ["-f", "png"];
+    if (width) args.push("-w", String(width));
+    else if (options.scale !== 1) args.push("-z", String(options.scale));
+    const rsvg = spawnSync("rsvg-convert", args, {
       input: svg,
       encoding: null,
       timeout: 5000,
@@ -582,6 +646,8 @@ function convertSvg(svg, format, background) {
 
   const magickFormat = format === "jpg" ? "jpg" : format;
   const magickArgs = ["svg:-"];
+  if (width) magickArgs.push("-resize", `${width}x`);
+  else if (options.scale !== 1) magickArgs.push("-resize", `${options.scale * 100}%`);
   if (format === "jpg") {
     magickArgs.push("-background", background, "-alpha", "remove", "-alpha", "off");
   }
@@ -597,6 +663,30 @@ function convertSvg(svg, format, background) {
   throw new Error(
     `CodeSnap: ${format} export requires rsvg-convert or ImageMagick (magick).`,
   );
+}
+
+function targetWidth(svg, options) {
+  const naturalWidth = Number(svg.match(/<svg[^>]+width="(\d+)"/)?.[1]);
+  if (options.width) return options.width;
+  if (options.max_width && Number.isFinite(naturalWidth)) {
+    return Math.min(options.max_width, naturalWidth * options.scale);
+  }
+  return null;
+}
+
+function previewOutput(data, format) {
+  const previewPath = join(tmpdir(), `zed-codesnap-preview-${process.pid}.${format}`);
+  writeFileSync(previewPath, data);
+  const commands = process.platform === "darwin"
+    ? [["open", previewPath]]
+    : process.platform === "win32"
+      ? [["cmd.exe", "/c", "start", "", previewPath]]
+      : [["xdg-open", previewPath]];
+  for (const command of commands) {
+    const result = spawnSync(command[0], command.slice(1), { encoding: "utf8", timeout: 1000 });
+    if (result.status === 0) return true;
+  }
+  return false;
 }
 
 function renderHtml(code, language, options) {
@@ -617,7 +707,7 @@ function escapeHtml(value) {
 
 function printHelp() {
   console.log(
-    `CodeSnap: Capture Copied Selection\n\nUsage:\n  zed-codesnap --from-clipboard --copy\n  zed-codesnap --from-stdin --language rust --no-copy\n  zed-codesnap --file src/main.rs --format jpg --save\n\nDefault format: png\nSupported formats: png, jpg, svg, html\nZed task title: CodeSnap: Capture Copied Selection`,
+    `CodeSnap: Capture Copied Selection\n\nUsage:\n  zed-codesnap --from-clipboard --copy --preview\n  zed-codesnap --from-stdin --language rust --no-copy --scale 2\n  zed-codesnap --file src/main.rs --format jpg --save --width 1200\n\nDefault format: png\nSupported formats: png, jpg, svg, html\nZed task title: CodeSnap: Capture Copied Selection`,
   );
 }
 
@@ -641,12 +731,17 @@ try {
       "CodeSnap: no code found. Select code in Zed, copy it, then run “CodeSnap: Capture Copied Selection”.",
     );
   }
-  const language = inferLanguage(args);
+  const language = inferLanguage(args, code);
   if (!options.copy_to_clipboard && !options.save_to_file) {
     throw new Error("CodeSnap: enable --copy or --save so the rendered image has a destination.");
   }
 
   const rendered = renderOutput(code, language, options);
+  if (options.preview && previewOutput(rendered, options.format)) {
+    console.log("CodeSnap preview opened.");
+  } else if (options.preview) {
+    console.error("CodeSnap: preview unavailable. Install xdg-open or open the saved output manually.");
+  }
   let outputPath = null;
   if (options.save_to_file) {
     outputPath = buildPath(
@@ -663,6 +758,19 @@ try {
       console.log("CodeSnap image copied to clipboard.");
     } else if (outputPath && copyFileToClipboard(outputPath)) {
       console.log("CodeSnap file copied to clipboard.");
+    } else if (!outputPath && options.save_on_copy_failure) {
+      outputPath = buildPath(
+        options,
+        language,
+        args.file || options.window_title || language,
+      );
+      writeFileSync(outputPath, rendered);
+      if (copyFileToClipboard(outputPath)) {
+        console.log(`CodeSnap saved fallback: ${outputPath}`);
+        console.log("CodeSnap file copied to clipboard.");
+      } else {
+        throw new Error(`CodeSnap: clipboard image copy is unavailable. Saved fallback: ${outputPath}`);
+      }
     } else if (outputPath) {
       console.error(
         "CodeSnap: saved, but clipboard image copy is unavailable. Install wl-copy or xclip.",

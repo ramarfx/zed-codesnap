@@ -12,7 +12,7 @@ Current public Zed extension APIs do not expose direct active-selection, clipboa
 
 ## What is included
 
-- `scripts/zed-codesnap.mjs` — Node CLI renderer/export helper. It reads clipboard, stdin, or a file; renders a restrained Zed-like CodeSnap output with lightweight syntax highlighting; copies the rendered PNG/JPG image directly to the OS clipboard, and only saves a file when requested.
+- `scripts/zed-codesnap.mjs` — Node CLI renderer/export helper. It reads clipboard, stdin, or a file; infers language from common syntax when no language is provided; renders a restrained Zed-like CodeSnap output with lightweight syntax highlighting; supports preview and size presets; copies the rendered PNG/JPG image directly to the OS clipboard; and only saves a file when requested or when clipboard copy needs a fallback.
 - `.zed/tasks.json` — native-feeling Zed task entry point named `CodeSnap: Capture Copied Selection`.
 - `extension.toml`, `Cargo.toml`, `src/*.rs` — experimental Zed slash-command wrapper that validates explicit input or worktree files and prepares a normalized render request for future extension-side integration.
 - `scripts/test-cli.mjs` — functional workflow tests for save-to-Unduhan behavior, collisions, config overrides, and common errors.
@@ -33,6 +33,28 @@ Local loading workflow:
 3. Use the included `.zed/tasks.json`, or copy the `CodeSnap: Capture Copied Selection` task into another project's `.zed/tasks.json`.
 4. Run `node scripts/test-cli.mjs` to confirm the helper can save files on your machine.
 5. For the experimental wrapper, open Zed's extension development flow and load this folder as a dev extension. The dependable day-to-day capture path remains the task/CLI helper because current public Zed APIs cannot directly read the active selection.
+
+Global setup for all Zed projects:
+
+1. Link the CLI into a directory on `PATH`:
+
+```sh
+ln -s /path/to/zed-codesnap/scripts/zed-codesnap.mjs ~/.local/bin/zed-codesnap
+```
+
+2. Add this task to `~/.config/zed/tasks.json`:
+
+```json
+{
+  "label": "CodeSnap: Capture Copied Selection",
+  "command": "zed-codesnap --from-clipboard --copy --format png",
+  "use_new_terminal": false,
+  "allow_concurrent_runs": false,
+  "reveal": "always"
+}
+```
+
+Do not use `node scripts/zed-codesnap.mjs ...` in global tasks unless every project has that `scripts/` folder. Zed runs task commands from the active project root.
 
 ## Recommended Zed workflow
 
@@ -81,13 +103,16 @@ Optional keybinding example:
 ## CLI usage
 
 ```sh
-node scripts/zed-codesnap.mjs --from-clipboard --copy
-node scripts/zed-codesnap.mjs --from-stdin --language rust --no-copy < src/main.rs
-node scripts/zed-codesnap.mjs --file src/main.rs --format jpg --save --output-dir ~/Unduhan
+node scripts/zed-codesnap.mjs --from-clipboard --copy --preview
+node scripts/zed-codesnap.mjs --from-stdin --language rust --no-copy --scale 2 < src/main.rs
+node scripts/zed-codesnap.mjs --file src/main.rs --format jpg --save --width 1200 --output-dir ~/Unduhan
+node scripts/zed-codesnap.mjs --from-stdin --max-width 900 --copy
 node scripts/zed-codesnap.mjs --from-stdin --format html --language typescript
 ```
 
 Supported formats are `png`, `jpg`, `svg`, and `html`. The default is `png`. PNG/JPG export renders the highlighted SVG internally, then converts it with `rsvg-convert` or ImageMagick `magick`.
+
+If `--language` is omitted, the helper tries a small heuristic over copied code for common languages such as Rust, TypeScript, JavaScript, Python, Go, HTML, JSON, C, and shell.
 
 ```text
 CodeSnap: unsupported format `<format>`. Use png, jpg, svg, or html.
@@ -158,7 +183,12 @@ Example `.zed-codesnap.json`:
   "filename_pattern": "codesnap-{timestamp}-{slug}.{ext}",
   "output_directory": "~/Unduhan",
   "format": "png",
-  "copy_to_clipboard": true
+  "copy_to_clipboard": true,
+  "save_on_copy_failure": true,
+  "preview": false,
+  "scale": 2,
+  "width": null,
+  "max_width": null
 }
 ```
 
@@ -168,6 +198,11 @@ Settings schema:
 - `format` / CLI `--format`: `png`, `jpg`, `svg`, or `html`. Default: `png`.
 - `copy_to_clipboard` / CLI `--copy`, `--copy-to-clipboard`, `--no-copy`: copy the rendered image directly to clipboard. Default: `true` in the CLI helper.
 - CLI `--save`, `--save-to-file`, `--no-save`: save rendered output to disk. Default: off when copying, on when `--no-copy` is used.
+- `save_on_copy_failure`: if direct image clipboard copy fails, save an output file and try copying that file reference. Default: `true`.
+- `preview` / CLI `--preview`, `--no-preview`: open a native preview for the rendered image. In copy-only mode, preview uses a temporary file.
+- `scale` / CLI `--scale`: image scale from 1 to 4 when no explicit width is set. Default: `2`.
+- `width` / CLI `--width`: exact output width in pixels for PNG/JPG conversion.
+- `max_width` / CLI `--max-width`: maximum output width in pixels while preserving aspect ratio.
 - `theme_preset` / alias `theme`: style metadata. Default: `one-dark-pro`.
 - `background`: safe CSS color name, `transparent`, `#rgb`, or `#rrggbb`. Default: `#282c34`.
 - `padding`: integer pixels from 0 to 128. Default: `24` in CLI helper, `32` in the experimental extension boundary.
@@ -207,7 +242,7 @@ node scripts/test-cli.mjs
 node scripts/validate-scaffold.mjs
 ```
 
-The CLI test covers the happy path, PNG/JPG export, clipboard-only copy behavior, explicit save behavior, syntax-highlighted SVG source output, missing `~/Unduhan` creation, collision-safe names, changed configuration values, empty/no-selection input, unsupported language metadata, unsupported format feedback, and failed save feedback. Full native Zed loading and Rust compilation still require a machine with Zed and Rust installed.
+The CLI test covers the happy path, PNG/JPG export, width presets, clipboard-only copy behavior, explicit save behavior, syntax-highlighted SVG source output, heuristic language detection, missing `~/Unduhan` creation, collision-safe names, changed configuration values, empty/no-selection input, unsupported language metadata, unsupported format feedback, and failed save feedback. Full native Zed loading and Rust compilation still require a machine with Zed and Rust installed.
 
 ## Verification checklist
 
@@ -232,6 +267,10 @@ Acceptance coverage confirmed by the automated checklist:
 - Practical workflow: select, copy, run task, paste copied PNG/JPG image.
 - One Dark Pro-style syntax-highlighted image output for common code tokens.
 - Minimal image frame: code only, with no three-dot window ornament.
+- Native preview via `--preview`.
+- Size presets via `--scale`, `--width`, and `--max-width`.
+- Heuristic language detection when no language flag or file extension is available.
+- Clipboard failure fallback through saved output when direct image copy is unavailable.
 - Configurable render settings via `.zed-codesnap.json` and CLI overrides.
 - Default save location is `~/Unduhan`; missing directories are created recursively.
 - Filename collisions receive numeric suffixes instead of overwriting existing output.
