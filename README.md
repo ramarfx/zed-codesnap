@@ -6,13 +6,13 @@ A practical CodeSnap-style helper for Zed. The reliable workflow is intentionall
 2. Copy the selection with Zed's normal copy command.
 3. Run the Zed task `CodeSnap: Capture Copied Selection`.
 4. Read the concise terminal feedback.
-5. Paste the copied PNG/JPG file where supported, or open the generated image from `~/Unduhan`.
+5. Paste the copied PNG/JPG image. Use `--save` only when you also want a file.
 
 Current public Zed extension APIs do not expose direct active-selection, clipboard, custom panel, or native image-export APIs to normal extensions. Because of that Crimson Barrier, this project avoids heavy custom UI and uses Zed's normal task/terminal interaction pattern instead.
 
 ## What is included
 
-- `scripts/zed-codesnap.mjs` — Node CLI renderer/export helper. It reads clipboard, stdin, or a file; renders a restrained Zed-like CodeSnap output with lightweight syntax highlighting; creates the output folder when permitted; avoids filename collisions; can copy the rendered file to the OS clipboard; and prints the saved path.
+- `scripts/zed-codesnap.mjs` — Node CLI renderer/export helper. It reads clipboard, stdin, or a file; renders a restrained Zed-like CodeSnap output with lightweight syntax highlighting; copies the rendered PNG/JPG image directly to the OS clipboard, and only saves a file when requested.
 - `.zed/tasks.json` — native-feeling Zed task entry point named `CodeSnap: Capture Copied Selection`.
 - `extension.toml`, `Cargo.toml`, `src/*.rs` — experimental Zed slash-command wrapper that validates explicit input or worktree files and prepares a normalized render request for future extension-side integration.
 - `scripts/test-cli.mjs` — functional workflow tests for save-to-Unduhan behavior, collisions, config overrides, and common errors.
@@ -42,7 +42,7 @@ The repository includes this Zed task:
 [
   {
     "label": "CodeSnap: Capture Copied Selection",
-    "command": "node scripts/zed-codesnap.mjs --from-clipboard --copy --format png --output-dir ~/Unduhan",
+    "command": "node scripts/zed-codesnap.mjs --from-clipboard --copy --format png",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "reveal": "always"
@@ -60,11 +60,10 @@ In Zed:
 On success, the task prints:
 
 ```text
-CodeSnap saved: /home/<user>/Unduhan/codesnap-20260903-092400-rust.png
-CodeSnap file copied to clipboard.
+CodeSnap image copied to clipboard.
 ```
 
-The default save directory is `~/Unduhan`. The helper creates it if it does not already exist and permissions allow it. If a generated filename already exists, it appends `-2`, `-3`, etc. Clipboard copy uses OS file clipboard formats, so it copies the generated `.png` or `.jpg` file reference instead of raw SVG/XML text. On Linux this requires `wl-copy` or `xclip`; otherwise the file is still saved and the terminal reports that file clipboard copy is unavailable.
+With `--copy`, the helper copies image bytes directly to the clipboard and does not save a file. Use `--save` together with `--copy`, or use `--no-copy`, when you also want output under `~/Unduhan`. If a generated filename already exists, saved output appends `-2`, `-3`, etc.
 
 Optional keybinding example:
 
@@ -83,8 +82,8 @@ Optional keybinding example:
 
 ```sh
 node scripts/zed-codesnap.mjs --from-clipboard --copy
-node scripts/zed-codesnap.mjs --from-stdin --language rust < src/main.rs
-node scripts/zed-codesnap.mjs --file src/main.rs --format jpg --output-dir ~/Unduhan
+node scripts/zed-codesnap.mjs --from-stdin --language rust --no-copy < src/main.rs
+node scripts/zed-codesnap.mjs --file src/main.rs --format jpg --save --output-dir ~/Unduhan
 node scripts/zed-codesnap.mjs --from-stdin --format html --language typescript
 ```
 
@@ -98,7 +97,13 @@ CodeSnap: unsupported format `<format>`. Use png, jpg, svg, or html.
 
 Messages are short and Zed-like:
 
-Success:
+Clipboard success:
+
+```text
+CodeSnap image copied to clipboard.
+```
+
+Save success:
 
 ```text
 CodeSnap saved: ~/Unduhan/codesnap-20260903-092400.png
@@ -161,7 +166,8 @@ Settings schema:
 
 - `output_directory` / CLI `--output-dir`, `--output-directory`, `--output`: destination directory. Default: `~/Unduhan`.
 - `format` / CLI `--format`: `png`, `jpg`, `svg`, or `html`. Default: `png`.
-- `copy_to_clipboard` / CLI `--copy`, `--copy-to-clipboard`, `--no-copy`: copy the rendered file after saving. Default: `true` in the CLI helper.
+- `copy_to_clipboard` / CLI `--copy`, `--copy-to-clipboard`, `--no-copy`: copy the rendered image directly to clipboard. Default: `true` in the CLI helper.
+- CLI `--save`, `--save-to-file`, `--no-save`: save rendered output to disk. Default: off when copying, on when `--no-copy` is used.
 - `theme_preset` / alias `theme`: style metadata. Default: `one-dark-pro`.
 - `background`: safe CSS color name, `transparent`, `#rgb`, or `#rrggbb`. Default: `#282c34`.
 - `padding`: integer pixels from 0 to 128. Default: `24` in CLI helper, `32` in the experimental extension boundary.
@@ -201,7 +207,7 @@ node scripts/test-cli.mjs
 node scripts/validate-scaffold.mjs
 ```
 
-The CLI test covers the happy path, PNG/JPG export, syntax-highlighted SVG source output, missing `~/Unduhan` creation, collision-safe names, changed configuration values, empty/no-selection input, unsupported language metadata, unsupported format feedback, clipboard-copy feedback, and failed save feedback. Full native Zed loading and Rust compilation still require a machine with Zed and Rust installed.
+The CLI test covers the happy path, PNG/JPG export, clipboard-only copy behavior, explicit save behavior, syntax-highlighted SVG source output, missing `~/Unduhan` creation, collision-safe names, changed configuration values, empty/no-selection input, unsupported language metadata, unsupported format feedback, and failed save feedback. Full native Zed loading and Rust compilation still require a machine with Zed and Rust installed.
 
 ## Verification checklist
 
@@ -217,19 +223,19 @@ Manual smoke test in Zed:
 1. Select a small code block.
 2. Copy it.
 3. Run `task: spawn` → `CodeSnap: Capture Copied Selection`.
-4. Confirm the terminal prints `CodeSnap saved: ...`, then either `CodeSnap file copied to clipboard.` or a clipboard-tool warning.
+4. Confirm the terminal prints `CodeSnap image copied to clipboard.`.
 
 Acceptance coverage confirmed by the automated checklist:
 
 - Working CodeSnap-style output generation from stdin/file/clipboard helper paths.
 - Native-feeling Zed task entry point: `CodeSnap: Capture Copied Selection`.
-- Practical workflow: select, copy, run task, paste copied PNG/JPG file or open saved output.
+- Practical workflow: select, copy, run task, paste copied PNG/JPG image.
 - One Dark Pro-style syntax-highlighted image output for common code tokens.
 - Minimal image frame: code only, with no three-dot window ornament.
 - Configurable render settings via `.zed-codesnap.json` and CLI overrides.
 - Default save location is `~/Unduhan`; missing directories are created recursively.
 - Filename collisions receive numeric suffixes instead of overwriting existing output.
-- Optional clipboard output reports success or a non-fatal tooling warning.
+- Clipboard output does not create a saved file unless `--save` is used.
 - Empty selection/no input fails with actionable guidance.
 - Unsupported language metadata falls back safely and cannot escape the filename pattern.
 - Unsupported formats fail clearly.
@@ -239,7 +245,7 @@ Acceptance coverage confirmed by the automated checklist:
 
 - Current public Zed extension APIs do not expose direct active-selection capture, arbitrary clipboard access, custom panels/webviews, or native image export for normal extensions.
 - PNG/JPG export requires `rsvg-convert` or ImageMagick `magick` on the machine running the helper.
-- Clipboard file support depends on the receiving app and installed OS clipboard tooling. Linux file clipboard copy requires `wl-copy` or `xclip`.
+- Clipboard image support depends on installed OS clipboard tooling. Linux image clipboard copy requires `wl-copy` or `xclip`.
 - The experimental slash command is an integration boundary, not the recommended daily workflow.
 
 ## Troubleshooting

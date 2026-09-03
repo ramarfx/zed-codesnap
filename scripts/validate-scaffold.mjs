@@ -107,7 +107,7 @@ check(/normalizeLanguage/.test(cli), 'CLI normalizes unsupported language metada
 
 const tasks = read('.zed/tasks.json');
 check(/CodeSnap: Capture Copied Selection/.test(tasks), 'Zed task uses native-feeling command title');
-check(/--from-clipboard/.test(tasks) && /~\/Unduhan/.test(tasks), 'Zed task captures clipboard and defaults to ~/Unduhan');
+check(/--from-clipboard/.test(tasks) && /--copy/.test(tasks) && /--format png/.test(tasks), 'Zed task captures clipboard as a png image');
 
 if (failures > 0) {
   console.error(`\n${failures} scaffold/configuration validation checks failed.`);

@@ -30,6 +30,7 @@ function parseArgs(argv) {
     config: ".zed-codesnap.json",
     title: null,
     copy: null,
+    save: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -71,6 +72,14 @@ function parseArgs(argv) {
       case "--no-copy":
       case "--no-copy-to-clipboard":
         args.copy = false;
+        break;
+      case "--save":
+      case "--save-to-file":
+        args.save = true;
+        break;
+      case "--no-save":
+      case "--no-save-to-file":
+        args.save = false;
         break;
       case "--help":
       case "-h":
@@ -126,6 +135,7 @@ function normalizeOptions(config, args) {
   if (args.title) options.window_title = args.title;
   if (args.language && !options.language) options.language = args.language;
   if (args.copy !== null) options.copy_to_clipboard = args.copy;
+  options.save_to_file = args.save;
 
   options.output_directory = expandHome(
     stringOr(options.output_directory, DEFAULTS.output_directory),
@@ -158,6 +168,7 @@ function normalizeOptions(config, args) {
     DEFAULTS.filename_pattern,
   );
   options.copy_to_clipboard = Boolean(options.copy_to_clipboard);
+  options.save_to_file = options.save_to_file ?? !options.copy_to_clipboard;
   return options;
 }
 
@@ -283,6 +294,32 @@ function copyFileToClipboard(path) {
   if (copyWithDetachedXclip(xclipTarget, xclipInput)) return true;
 
   return false;
+}
+
+function copyImageToClipboard(data, format) {
+  const mimeType = mimeTypeForFormat(format);
+  if (!mimeType) return false;
+
+  if (process.platform === "darwin" || process.platform === "win32") {
+    return false;
+  }
+
+  const wlCopy = spawnSync("wl-copy", ["--type", mimeType], {
+    input: data,
+    encoding: null,
+    timeout: 5000,
+  });
+  if (wlCopy.status === 0) return true;
+
+  return copyWithDetachedXclip(mimeType, data);
+}
+
+function mimeTypeForFormat(format) {
+  if (format === "png") return "image/png";
+  if (format === "jpg") return "image/jpeg";
+  if (format === "svg") return "image/svg+xml";
+  if (format === "html") return "text/html";
+  return null;
 }
 
 function copyWithDetachedXclip(target, input) {
@@ -523,6 +560,15 @@ function writeRenderedOutput(outputPath, svg, options) {
   writeFileSync(outputPath, converted);
 }
 
+function renderOutput(code, language, options) {
+  if (options.format === "html") {
+    return Buffer.from(renderHtml(code, language, options), "utf8");
+  }
+  const svg = renderSvg(code, language, options);
+  if (options.format === "svg") return Buffer.from(svg, "utf8");
+  return convertSvg(svg, options.format, options.background);
+}
+
 function convertSvg(svg, format, background) {
   if (format === "png") {
     const rsvg = spawnSync("rsvg-convert", ["-f", "png"], {
@@ -571,7 +617,7 @@ function escapeHtml(value) {
 
 function printHelp() {
   console.log(
-    `CodeSnap: Capture Copied Selection\n\nUsage:\n  zed-codesnap --from-clipboard --copy\n  zed-codesnap --from-stdin --language rust\n  zed-codesnap --file src/main.rs\n  zed-codesnap --from-stdin --format jpg\n\nDefault output: ~/Unduhan\nSupported formats: png, jpg, svg, html\nZed task title: CodeSnap: Capture Copied Selection`,
+    `CodeSnap: Capture Copied Selection\n\nUsage:\n  zed-codesnap --from-clipboard --copy\n  zed-codesnap --from-stdin --language rust --no-copy\n  zed-codesnap --file src/main.rs --format jpg --save\n\nDefault format: png\nSupported formats: png, jpg, svg, html\nZed task title: CodeSnap: Capture Copied Selection`,
   );
 }
 
@@ -596,24 +642,33 @@ try {
     );
   }
   const language = inferLanguage(args);
-  const outputPath = buildPath(
-    options,
-    language,
-    args.file || options.window_title || language,
-  );
-  if (options.format === "html") {
-    writeFileSync(outputPath, renderHtml(code, language, options), "utf8");
-  } else {
-    writeRenderedOutput(outputPath, renderSvg(code, language, options), options);
+  if (!options.copy_to_clipboard && !options.save_to_file) {
+    throw new Error("CodeSnap: enable --copy or --save so the rendered image has a destination.");
   }
-  console.log(`CodeSnap saved: ${outputPath}`);
+
+  const rendered = renderOutput(code, language, options);
+  let outputPath = null;
+  if (options.save_to_file) {
+    outputPath = buildPath(
+      options,
+      language,
+      args.file || options.window_title || language,
+    );
+    writeFileSync(outputPath, rendered);
+    console.log(`CodeSnap saved: ${outputPath}`);
+  }
+
   if (options.copy_to_clipboard) {
-    if (copyFileToClipboard(outputPath)) {
+    if (copyImageToClipboard(rendered, options.format)) {
+      console.log("CodeSnap image copied to clipboard.");
+    } else if (outputPath && copyFileToClipboard(outputPath)) {
       console.log("CodeSnap file copied to clipboard.");
-    } else {
+    } else if (outputPath) {
       console.error(
-        "CodeSnap: saved, but file clipboard copy is unavailable. Install wl-copy or xclip.",
+        "CodeSnap: saved, but clipboard image copy is unavailable. Install wl-copy or xclip.",
       );
+    } else {
+      throw new Error("CodeSnap: clipboard image copy is unavailable. Install wl-copy or xclip, or run with --save.");
     }
   }
 } catch (error) {

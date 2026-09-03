@@ -79,12 +79,16 @@ try {
   check(badFormat.stderr.includes('CodeSnap: unsupported format `bmp`'), 'unsupported format error is concise');
 
   const copy = run(['--from-stdin', '--copy'], 'fn main() {}');
-  check(copy.status === 0, 'copy option does not fail capture when clipboard tooling is unavailable');
-  check(/CodeSnap file copied to clipboard|file clipboard copy is unavailable/.test(`${copy.stdout}${copy.stderr}`), 'copy option reports clipboard result');
+  check(copy.status === 0, 'copy option exits successfully when clipboard tooling is available');
+  check(copy.stdout.includes('CodeSnap image copied to clipboard.'), 'copy option reports image clipboard result');
+  check(!copy.stdout.includes('CodeSnap saved:'), 'copy option does not save a file by default');
+
+  const copyAndSave = run(['--from-stdin', '--copy', '--save'], 'fn main() {}');
+  check(copyAndSave.status === 0 && copyAndSave.stdout.includes('CodeSnap saved:'), 'copy and save can be combined explicitly');
 
   const blockedDestination = join(tmpHome, 'not-a-directory');
   writeFileSync(blockedDestination, 'I am a file, not a folder', 'utf8');
-  const failedSave = run(['--from-stdin', '--output-dir', blockedDestination], 'fn main() {}');
+  const failedSave = run(['--from-stdin', '--no-copy', '--output-dir', blockedDestination], 'fn main() {}');
   check(failedSave.status !== 0, 'failed save exits non-zero');
   check(/ENOTDIR|EEXIST|EACCES|EPERM|failed to save/.test(failedSave.stderr), 'failed save reports an actionable filesystem error');
 } finally {
